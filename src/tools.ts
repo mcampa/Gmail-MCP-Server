@@ -8,7 +8,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 export const InlineImageSchema = z.object({
   cid: z.string().min(1).regex(/^[^\s<>]+$/, "cid must not contain whitespace or angle brackets")
     .describe("Content-ID for the image, referenced from htmlBody as <img src=\"cid:CID\">"),
-  path: z.string().optional().describe("Absolute file path to the image (use this OR content)"),
+  path: z.string().optional().describe("Path to an image file inside ~/Downloads/gmail-mcp (relative paths resolve there; files elsewhere are rejected). Use this OR content."),
   content: z.string().optional().describe("Base64-encoded image data (use this OR path)"),
   contentType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/x-icon']).optional()
     .describe("Image MIME type — required when using `content`. SVG is intentionally unsupported."),
@@ -32,7 +32,7 @@ export const SendEmailSchema = z.object({
   bcc: z.array(z.string()).optional().describe("List of BCC recipients"),
   threadId: z.string().optional().describe("Thread ID to reply to"),
   inReplyTo: z.string().optional().describe("Message ID being replied to"),
-  attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
+  attachments: z.array(z.string()).optional().describe("Files to attach. Only files inside ~/Downloads/gmail-mcp are allowed (relative paths resolve there); max 25 MB each."),
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
@@ -77,7 +77,7 @@ export const UpdateDraftSchema = z.object({
   bcc: z.array(z.string()).optional().describe("List of BCC recipients"),
   threadId: z.string().optional().describe("Thread ID to reply to"),
   inReplyTo: z.string().optional().describe("Message ID being replied to"),
-  attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
+  attachments: z.array(z.string()).optional().describe("Files to attach. Only files inside ~/Downloads/gmail-mcp are allowed (relative paths resolve there); max 25 MB each."),
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
@@ -174,13 +174,13 @@ export const CreateFilterFromTemplateSchema = z.object({
 export const DownloadAttachmentSchema = z.object({
   messageId: z.string().describe("ID of the email message containing the attachment"),
   attachmentId: z.string().describe("ID of the attachment to download"),
-  filename: z.string().optional().describe("Filename to save the attachment as (if not provided, uses original filename)"),
-  savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
+  filename: z.string().optional().describe("Filename to save the attachment as (if not provided, uses original filename). Existing files are never overwritten; a numeric suffix is added instead."),
+  savePath: z.string().optional().describe("Directory inside ~/Downloads/gmail-mcp to save into (defaults to ~/Downloads/gmail-mcp; relative paths resolve there; anything outside is rejected)"),
 });
 
 export const DownloadEmailSchema = z.object({
   messageId: z.string().describe("ID of the email message to download"),
-  savePath: z.string().describe("Directory path to save the email file"),
+  savePath: z.string().optional().describe("Directory inside ~/Downloads/gmail-mcp to save into (defaults to ~/Downloads/gmail-mcp; relative paths resolve there; anything outside is rejected)"),
   format: z.enum(['json', 'eml', 'txt', 'html']).optional().default('json')
     .describe("Output format: json (structured data), eml (raw RFC822), txt (plain text), html (formatted HTML)"),
 });
@@ -214,7 +214,7 @@ export const ReplyAllSchema = z.object({
   body: z.string().describe("Reply body content (used for text/plain or when htmlBody not provided)"),
   htmlBody: z.string().optional().describe("HTML version of the reply body"),
   mimeType: z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional().default('text/plain').describe("Email content type"),
-  attachments: z.array(z.string()).optional().describe("List of file paths to attach to the reply"),
+  attachments: z.array(z.string()).optional().describe("Files to attach to the reply. Only files inside ~/Downloads/gmail-mcp are allowed (relative paths resolve there); max 25 MB each."),
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
@@ -254,7 +254,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "download_attachment",
-    description: "Downloads an email attachment to a specified location",
+    description: "Downloads an email attachment into ~/Downloads/gmail-mcp (never overwrites existing files)",
     schema: DownloadAttachmentSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Attachment", readOnlyHint: true },
@@ -291,7 +291,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "download_email",
-    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context.",
+    description: "Downloads an email to a file in ~/Downloads/gmail-mcp in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context.",
     schema: DownloadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Email", readOnlyHint: true },

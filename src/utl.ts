@@ -2,13 +2,32 @@ import fs from 'fs';
 import path from 'path';
 import { lookup as mimeLookup } from 'mime-types';
 import nodemailer from 'nodemailer';
+import { FILES_DIR, resolveReadableFile } from './safe-paths.js';
 
 /**
  * Upper bound on the decoded size of a base64 `content` inline image. Rejecting
  * oversized payloads before nodemailer buffers them prevents host-process memory
- * exhaustion. File-path images stream and are not subject to this check.
+ * exhaustion.
  */
 export const MAX_INLINE_IMAGE_CONTENT_BYTES = 10 * 1024 * 1024;
+
+/** Upper bound on a single attached file (Gmail's own attachment limit). */
+export const MAX_ATTACHMENT_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Read a file that will be sent, enforcing the files-dir confinement and size
+ * limit. Content is read here so nodemailer never resolves paths or URLs itself.
+ */
+function readSendableFile(filePath: string, filesDir: string): Buffer {
+    const realPath = resolveReadableFile(filePath, filesDir);
+    const size = fs.statSync(realPath).size;
+    if (size > MAX_ATTACHMENT_FILE_BYTES) {
+        throw new Error(
+            `File ${filePath} exceeds the ${MAX_ATTACHMENT_FILE_BYTES / (1024 * 1024)} MB attachment limit`,
+        );
+    }
+    return fs.readFileSync(realPath);
+}
 
 /**
  * Helper function to encode email headers containing non-ASCII characters
@@ -121,7 +140,11 @@ export function createEmailMessage(validatedArgs: any): string {
 }
 
 
-export async function createEmailWithNodemailer(validatedArgs: any): Promise<string> {
+/**
+ * Build a raw RFC822 message with attachments / inline images. Local files may
+ * only be read from `filesDir` (default ~/Downloads/gmail-mcp); see safe-paths.ts.
+ */
+export async function createEmailWithNodemailer(validatedArgs: any, filesDir: string = FILES_DIR): Promise<string> {
     // Validate email addresses
     (validatedArgs.to as string[]).forEach(email => {
         if (!validateEmail(email)) {
@@ -145,15 +168,9 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
     // Prepare attachments for nodemailer
     const attachments: any[] = [];
     for (const filePath of (validatedArgs.attachments || [])) {
-        if (!fs.existsSync(filePath)) {
-            throw new Error(`File does not exist: ${filePath}`);
-        }
-
-        const fileName = path.basename(filePath);
-
         attachments.push({
-            filename: fileName,
-            path: filePath
+            filename: path.basename(filePath),
+            content: readSendableFile(filePath, filesDir),
         });
     }
 
@@ -170,10 +187,7 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         const part: Record<string, unknown> = { cid };
 
         if (img.path) {
-            if (!fs.existsSync(img.path)) {
-                throw new Error(`Inline image file does not exist: ${img.path}`);
-            }
-            part.path = img.path;
+            part.content = readSendableFile(img.path, filesDir);
             part.filename = img.filename || path.basename(img.path);
         } else {
             // Reject oversized base64 payloads before nodemailer buffers them in
@@ -206,7 +220,11 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         html: validatedArgs.htmlBody,
         attachments: attachments,
         inReplyTo: validatedArgs.inReplyTo,
-        references: validatedArgs.references || validatedArgs.inReplyTo
+        references: validatedArgs.references || validatedArgs.inReplyTo,
+        // All file content is pre-read above from the confined files dir;
+        // nodemailer itself must never open local paths or fetch URLs.
+        disableFileAccess: true,
+        disableUrlAccess: true,
     };
 
     // Generate the raw message

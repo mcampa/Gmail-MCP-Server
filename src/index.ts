@@ -22,6 +22,7 @@ import { DEFAULT_SCOPES, scopeNamesToUrls, parseScopes, validateScopes, hasScope
 import { toolDefinitions, toMcpTools, getToolByName, SendEmailSchema, ReadEmailSchema, SearchEmailsSchema, ModifyEmailSchema, DeleteEmailSchema, BatchModifyEmailsSchema, ReportPhishingSchema, BatchReportPhishingSchema, BatchDeleteEmailsSchema, CreateLabelSchema, UpdateLabelSchema, DeleteLabelSchema, GetOrCreateLabelSchema, CreateFilterSchema, GetFilterSchema, DeleteFilterSchema, CreateFilterFromTemplateSchema, DownloadAttachmentSchema, ReplyAllSchema, GetThreadSchema, ListInboxThreadsSchema, GetInboxWithThreadsSchema, DownloadEmailSchema, ModifyThreadSchema, SendDraftSchema, DeleteDraftSchema, UpdateDraftSchema } from "./tools.js";
 import { gmailMessageToJson, emailToTxt, emailToHtml, EmailAttachment } from "./email-export.js";
 import { resolveToolPrefix } from "./tool-prefix.js";
+import { resolveSaveDir, writeFileNoClobber } from "./safe-paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -148,18 +149,12 @@ async function loadCredentials() {
             fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
         }
 
-        // Check for OAuth keys in current directory first, then in config directory
-        const localOAuthPath = path.join(process.cwd(), 'gcp-oauth.keys.json');
-        let oauthPath = OAUTH_PATH;
-
-        if (fs.existsSync(localOAuthPath)) {
-            // If found in current directory, copy to config directory
-            fs.copyFileSync(localOAuthPath, OAUTH_PATH);
-            console.log('OAuth keys found in current directory, copied to global config.');
-        }
-
+        // OAuth keys are read only from OAUTH_PATH. Upstream also copied
+        // ./gcp-oauth.keys.json from the current working directory over the global
+        // keys on every start; MCP clients launch this server from whatever project
+        // is open, so any repository could silently swap the OAuth client. Removed.
         if (!fs.existsSync(OAUTH_PATH)) {
-            console.error('Error: OAuth keys file not found. Please place gcp-oauth.keys.json in current directory or', CONFIG_DIR);
+            console.error('Error: OAuth keys file not found. Place gcp-oauth.keys.json at', OAUTH_PATH, '(or set GMAIL_OAUTH_PATH)');
             process.exit(1);
         }
 
@@ -691,10 +686,8 @@ async function main() {
                     const { messageId, savePath, format } = validatedArgs;
 
                     try {
-                        // Ensure save directory exists
-                        if (!fs.existsSync(savePath)) {
-                            fs.mkdirSync(savePath, { recursive: true });
-                        }
+                        // Confined to ~/Downloads/gmail-mcp (see safe-paths.ts); created if missing
+                        const saveDir = resolveSaveDir(savePath);
 
                         // Always fetch full message for metadata (needed for attachments list)
                         const fullResponse = await gmail.users.messages.get({
@@ -731,10 +724,8 @@ async function main() {
                             }
                         }
 
-                        // Write file
-                        const filename = `${messageId}.${format}`;
-                        const fullPath = path.join(savePath, filename);
-                        fs.writeFileSync(fullPath, content, "utf-8");
+                        // Write file (never overwrites; messageId is reduced to a basename)
+                        const fullPath = writeFileNoClobber(saveDir, `${messageId}.${format}`, content);
                         const stats = fs.statSync(fullPath);
 
                         // Return metadata with attachments
@@ -1320,8 +1311,10 @@ async function main() {
                         const data = attachmentResponse.data.data;
                         const buffer = Buffer.from(data, 'base64url');
 
-                        // Determine save path and filename
-                        const savePath = validatedArgs.savePath || process.cwd();
+                        // Save directory is confined to ~/Downloads/gmail-mcp (see safe-paths.ts).
+                        // Upstream defaulted to process.cwd(), i.e. whatever project the MCP
+                        // client was opened in.
+                        const saveDir = resolveSaveDir(validatedArgs.savePath);
                         let filename = validatedArgs.filename;
 
                         if (!filename) {
@@ -1349,27 +1342,14 @@ async function main() {
                             filename = findAttachment(messageResponse.data.payload) || `attachment-${validatedArgs.attachmentId}`;
                         }
 
-                        // Sanitize filename to prevent path traversal
-                        filename = path.basename(filename);
-
-                        // Ensure save directory exists
-                        if (!fs.existsSync(savePath)) {
-                            fs.mkdirSync(savePath, { recursive: true });
-                        }
-
-                        // Resolve and validate final path stays within savePath
-                        const resolvedSavePath = path.resolve(savePath);
-                        const fullPath = path.resolve(resolvedSavePath, filename);
-                        if (!fullPath.startsWith(resolvedSavePath + path.sep) && fullPath !== resolvedSavePath) {
-                            throw new Error('Invalid filename: path traversal detected');
-                        }
-                        fs.writeFileSync(fullPath, buffer);
+                        // Reduces filename to its basename and never overwrites an existing file
+                        const fullPath = writeFileNoClobber(saveDir, filename, buffer);
 
                         return {
                             content: [
                                 {
                                     type: "text",
-                                    text: `Attachment downloaded successfully:\nFile: ${filename}\nSize: ${buffer.length} bytes\nSaved to: ${fullPath}`,
+                                    text: `Attachment downloaded successfully:\nFile: ${path.basename(fullPath)}\nSize: ${buffer.length} bytes\nSaved to: ${fullPath}`,
                                 },
                             ],
                         };

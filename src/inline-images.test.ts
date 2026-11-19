@@ -22,15 +22,20 @@ import { InlineImageSchema, ReplyAllSchema } from './tools.js';
 const PNG_B64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
 let imgPath: string;
+// Stands in for ~/Downloads/gmail-mcp: the only directory files may be read from.
+let filesDir: string;
 
 beforeAll(() => {
-    imgPath = path.join(os.tmpdir(), `inline-img-test-${Date.now()}.png`);
+    filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gmail-mcp-files-'));
+    imgPath = path.join(filesDir, 'inline-img-test.png');
     fs.writeFileSync(imgPath, Buffer.from(PNG_B64, 'base64'));
 });
 
 afterAll(() => {
-    if (imgPath && fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    if (filesDir) fs.rmSync(filesDir, { recursive: true, force: true });
 });
+
+const build = (args: any) => createEmailWithNodemailer(args, filesDir);
 
 const baseArgs = {
     to: ['recipient@example.com'],
@@ -41,7 +46,7 @@ const baseArgs = {
 
 describe('createEmailWithNodemailer — inline images', () => {
     it('emits multipart/related with Content-ID and inline disposition (path source)', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             inlineImages: [{ cid: 'logo1', path: imgPath }],
         });
@@ -51,7 +56,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('supports a base64 content source', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             inlineImages: [{ cid: 'logo1', content: PNG_B64, contentType: 'image/png' }],
         });
@@ -61,7 +66,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('keeps the plain-text + HTML alternative present', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             inlineImages: [{ cid: 'logo1', path: imgPath }],
         });
@@ -71,7 +76,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('embeds a regular attachment alongside an inline image (multipart/mixed)', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             attachments: [imgPath],
             inlineImages: [{ cid: 'logo1', path: imgPath }],
@@ -82,7 +87,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('handles multiple inline images', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             htmlBody: '<img src="cid:a"><img src="cid:b">',
             inlineImages: [
@@ -95,7 +100,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('sanitizes CRLF injection attempts in cid (no injected header line)', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             ...baseArgs,
             inlineImages: [{ cid: 'logo1\r\nX-Injected: evil', path: imgPath }],
         });
@@ -106,7 +111,7 @@ describe('createEmailWithNodemailer — inline images', () => {
 
     it('rejects inlineImages without htmlBody', async () => {
         await expect(
-            createEmailWithNodemailer({
+            build({
                 to: ['recipient@example.com'],
                 subject: 'No html',
                 body: 'plain only',
@@ -117,7 +122,7 @@ describe('createEmailWithNodemailer — inline images', () => {
 
     it('rejects a missing inline image file', async () => {
         await expect(
-            createEmailWithNodemailer({
+            build({
                 ...baseArgs,
                 inlineImages: [{ cid: 'logo1', path: '/nonexistent/path/nope.png' }],
             }),
@@ -127,7 +132,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     it('rejects a base64 content image over the size limit', async () => {
         const tooBig = 'A'.repeat(Math.ceil((MAX_INLINE_IMAGE_CONTENT_BYTES * 4) / 3) + 1000);
         await expect(
-            createEmailWithNodemailer({
+            build({
                 ...baseArgs,
                 inlineImages: [{ cid: 'big', content: tooBig, contentType: 'image/png' }],
             }),
@@ -135,7 +140,7 @@ describe('createEmailWithNodemailer — inline images', () => {
     });
 
     it('works with an HTML body and no plain-text body', async () => {
-        const raw = await createEmailWithNodemailer({
+        const raw = await build({
             to: ['recipient@example.com'],
             subject: 'HTML only',
             htmlBody: '<p>No plain text here</p><img src="cid:logo1">',

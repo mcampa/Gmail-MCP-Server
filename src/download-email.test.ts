@@ -236,10 +236,9 @@ describe("DownloadEmailSchema", () => {
     ).toThrow();
   });
 
-  it("requires savePath", () => {
-    expect(() =>
-      DownloadEmailSchema.parse({ messageId: "msg123" })
-    ).toThrow();
+  it("savePath is optional (defaults to ~/Downloads/gmail-mcp at runtime)", () => {
+    const result = DownloadEmailSchema.parse({ messageId: "msg123" });
+    expect(result.savePath).toBeUndefined();
   });
 });
 
