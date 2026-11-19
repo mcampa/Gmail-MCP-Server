@@ -56,10 +56,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "email-addresses": "^5.0.0",
-    "google-auth-library": "^9.4.1",
-    "googleapis": "^129.0.0",
+    "google-auth-library": "^11.3.3",
+    "googleapis": "^188.0.0",
     "mime-types": "^3.0.1",
-    "nodemailer": "^7.0.11",
+    "nodemailer": "^10.3.1",
     "open": "^10.0.0",
     "zod": "^3.22.4",
     "zod-to-json-schema": "^3.22.1"
@@ -72,5 +72,8 @@
     "mcp-evals": "^1.0.18",
     "typescript": "^5.3.3",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "@hono/node-server": "2.1.6"
   }
 }
